@@ -1,0 +1,211 @@
+---
+output: 
+  html_document: 
+    fig_caption: yes
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, fig.width=10, fig.height=8)
+options(width = 120)
+
+```
+
+## Practical Machine Learning Project 
+
+###### (Part of Coursera - Johns Hopkins University - Data Science Specialization) 
+###### Author: Aled Evans
+
+### Introduction
+
+###### This assignment focuses on fitness data gathered from accelerometers attached to different parts of the body. Using the data the assignment  applies different machine learning models and identifies the best model for predicting the “classee” variable from a separate test dataset.
+###### The data was downloaded from: http://groupware.les.inf.puc-rio.br/har. (Human Activity recognition, Groupware @ LES - Weight Lifting Exercises Dataset).
+
+###### The Random Forest Model was selected (with the Generalized Boosted Model a very close second). The resulting predictions for "classe" in the test set scored 20 out of 20 - a 100% prediction success.
+
+#### Loading Data and Preparation
+
+
+```{r load packages and set seed}
+# Prepare the R environment by loading required packages
+library(plyr)
+library(caret)
+library(randomForest)
+library(gbm)
+library(survival)
+library(kernlab)
+library(splines)
+library(parallel)
+library(e1071)
+# set seed for reproducibility
+set.seed(425)
+```
+
+
+##### Loading Data for training
+
+```{r load training data}
+ # Loading Data from url
+urlTraining <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+download.file(urlTraining, destfile="pml-training.csv")
+dataTraining1 <- read.csv("pml-training.csv", header=TRUE)
+```
+
+
+#### Exploratory Data Analysis 1 - Review datasets 
+
+```{r review dataset}
+# use "dim" to give brief overveiw of loaded dataset structure
+dim(dataTraining1)
+```
+
+###### The dataset has 160 variables and 19622 observations (rows).
+###### From use of "str" we see a number of NA values in a number of variables (just from reviewing the first 40 rows) [The code and printout is in Appendix A]. To increase the speed and efficiency of the training, a number or variables are removed. Variables  with a large number of NA values (greater than 90%) are removed and also the first column - a variable that is irrelevant to the training model.
+
+
+ 
+```{r remove number column and remove large NA variables}
+# remove number column - write to "dataTraining" dataframe for further processing 
+dataTraining <- dataTraining1[,-1]
+# Remove varables with NA greater than 90%. "dim" to review datset structure
+naVar <- sapply(dataTraining, function(x) mean(is.na(x))) > 0.90
+dataTraining <- dataTraining[, naVar==FALSE]
+dim(dataTraining)
+```
+
+###### There are now 92 varables. A further processing procedure is to remove variables with Near Zero Variance.
+
+```{r remove variables with Near Zero Variance}
+# remove variables with Near Zero Variance
+nearZero <- nearZeroVar(dataTraining)
+dataTraining <- dataTraining[, -nearZero]
+dim(dataTraining)
+
+```
+
+
+###### After data processing there are now 58 variables. The reduction in dataset size will significantly improve the training speed without impacting on the accuracy of the models.
+
+### Data Splitting For Training
+###### For the training of the models, the dataset is partitioned (split) 75% for training and 25% for cross-validation. (The datasets are given 'tidy' in their name to indicate they have been completed processed.)
+
+
+```{r split dataframe training and for cross-validation }
+# split dataframe training and for cross-validation.
+dataTraining2 <- createDataPartition(y=dataTraining$classe,p=0.75, list=FALSE)
+tidyTraining <- dataTraining[dataTraining2,]
+tidyCrossVal <- dataTraining[-dataTraining2,]
+# check structure of the partitioned datesets.
+dim(tidyTraining)
+dim(tidyCrossVal)
+```
+
+
+### Model Selection
+
+###### Three models are trained and assessed - the best performing model will then be selected for the prediction stage. The models are - 1 Random Forest; 2- Support Vector Machines with Linear Kernel; and 3 - Generalized Boosted Model. 'kappa' is also included for use as a metric is assessing the best model. A confusion matrix is also generated for each model to aid in model assessment.
+
+#### 1 - Random Forest Model
+
+
+``` {r set control and train Random Forest Model }
+
+# set a control group - use 6 'k' fold
+rfControl <- trainControl(method = "oob", number = 6)
+# Random forest Model - use 300 trees
+modelRandomF <- train(classe ~., data=tidyTraining, method="rf", ntree=300, metric="Kappa", trControl=rfControl)
+modelRandomF$finalModel
+
+```
+ 
+``` {r cross validation of random forest }
+
+# cross validation of random forest model
+predictRandomF <- predict(modelRandomF, tidyCrossVal)
+confMatxRandomF <-confusionMatrix(predictRandomF, tidyCrossVal$classe)
+confMatxRandomF
+```
+
+
+#### 2 - Support Vector Machines Model - with linear kernal
+
+``` {r SVM }
+# train SVMlinear
+modelSVM = train(classe ~., data=tidyTraining, method="svmLinear", metric="Kappa")
+modelSVM$finalModel
+```
+
+
+```{r}
+
+# SVM cross validation
+predictSVM <- predict(modelSVM, tidyCrossVal)
+confMatxSVM <- confusionMatrix(predictSVM, tidyCrossVal$classe)
+confMatxSVM
+```
+
+#### 3 - Generalized Boosted Model (GBM)
+
+``` {r train Generalized Boosted Model (GBM) }
+# set control
+gbmControl <- trainControl(method = "repeatedcv")
+# train GBM
+modelGBM <- train(classe ~., data=tidyTraining, method="gbm", metric="Kappa", trControl=gbmControl, verbose=FALSE)
+modelGBM$finalModel
+
+```
+
+``` {r cross validation of GBM}
+# cross validation of GBM
+predictGBM <- predict(modelGBM, tidyCrossVal)
+confMatxGBM <-confusionMatrix(predictGBM, tidyCrossVal$classe)
+confMatxGBM
+```
+
+#### Results
+###### Random Forest - 99.92% accuracy. Kappa = 0.999
+###### SVM - 90.88 accuracy. Kappa = 0.8845 
+###### GBM - 99.65% accuracy. Kappa = 0.9956
+
+###### It is very close between Random Forest and GBM. (SVM is not as strong). Random Forest has better accuracy and kappa (though the difference is very small) so Random Forest will be selected to predict the testing dataset.
+
+#### Apply Random Forest Model to test dataset for "classe" prediction.
+
+##### Load test data
+
+``` {r load testing data}
+# Load test data from URL
+urlTesting <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(urlTesting, destfile="pml-testing.csv")
+testing <- read.csv("pml-testing.csv", header=TRUE)
+# Check dimension of testing dataset
+dim(testing)
+```
+##### Apply Random Forest Model to test case "testing" for the 20 different test cases. (As the dataset is much smaller, the pre-processing carried out for the training set is not applied.) 
+
+```{r apply Random Forest Model to the testing dataset}
+# apply Random Forest Model model to testing dataset
+predictTest <- predict(modelRandomF, newdata=testing)
+# print out prediction
+print(as.data.frame(predictTest))
+```
+
+
+### Conclusion
+
+###### The resulting predictions for "classe" in the test set is 20 out of 20 (when tested on the Coursera website). A 100% prediction success.
+###### Both the Random Forest and GBM proved to be very strong models for the task. The out of sample error rate is very for both models (under 0.005%)
+
+
+
+### Appendix A
+
+######  Output of "str" of original training dataset when loaded. Used in the exploratory data analysis stage. 
+
+
+```{r appendix A - "str" of training dataset}
+
+str(dataTraining1, list.len=40)
+
+```
+
